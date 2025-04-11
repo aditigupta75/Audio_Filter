@@ -1,180 +1,105 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
 import numpy as np
 import sounddevice as sd
-from scipy.signal import butter, lfilter
+import tkinter as tk
+from tkinter import ttk
 import threading
-import soundfile as sf
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from scipy.signal import butter, lfilter
 
-class AudioApp:
+class SimpleHearingAid:
     def __init__(self, root):
         self.root = root
-        self.root.title("🦻 Smart Hearing Aid Console")
-        self.root.geometry("1000x720")
-        self.root.configure(bg='#eef2f7')
-
-        style = ttk.Style()
-        style.theme_use('clam')
-        style.configure('TNotebook.Tab', font=('Segoe UI', 12, 'bold'))
-        style.configure('TButton', font=('Segoe UI', 11), padding=6)
-        style.configure('TLabel', font=('Segoe UI', 11))
-
-        self.notebook = ttk.Notebook(root)
-        self.tab_realtime = ttk.Frame(self.notebook)
-        self.tab_file = ttk.Frame(self.notebook)
-        self.tab_settings = ttk.Frame(self.notebook)
-
-        self.notebook.add(self.tab_realtime, text='🎧 Real-Time')
-        self.notebook.add(self.tab_file, text='📂 File Processing')
-        self.notebook.add(self.tab_settings, text='⚙️ Settings')
-        self.notebook.pack(fill='both', expand=True)
-
-        self.setup_realtime_tab()
-        self.setup_file_tab()
-        self.setup_settings_tab()
-
-    def setup_realtime_tab(self):
-        frame = self.tab_realtime
-
-        ttk.Label(frame, text="🔊 Real-Time Audio Enhancer", font=("Segoe UI", 14, "bold")).grid(row=0, column=0, columnspan=2, pady=10)
-        self.gain_slider = self.make_slider(frame, "Gain", 1, 6, 3.0, row=1)
-
-        self.noise_gate_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(frame, text="Enable Noise Gate", variable=self.noise_gate_var).grid(row=2, column=0, columnspan=2, pady=5)
-
-        self.record_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(frame, text="Record Output", variable=self.record_var).grid(row=3, column=0, columnspan=2, pady=5)
-
-        self.fig, self.ax_wave = plt.subplots(figsize=(7, 3))
-        self.canvas = FigureCanvasTkAgg(self.fig, master=frame)
-        self.canvas.get_tk_widget().grid(row=4, column=0, padx=10, pady=10, columnspan=2)
-
-        ttk.Button(frame, text="▶ Start Real-Time Audio", command=self.realtime_process).grid(row=5, column=0, columnspan=2, pady=20)
-
-    def setup_file_tab(self):
-        frame = self.tab_file
-
-        ttk.Label(frame, text="📁 Process Audio File", font=("Segoe UI", 14, "bold")).grid(row=0, column=0, columnspan=2, pady=10)
-        self.file_gain_slider = self.make_slider(frame, "Gain", 1, 6, 3.0, row=1)
-
-        ttk.Button(frame, text="📂 Select Audio File", command=self.process_file).grid(row=2, column=0, columnspan=2, pady=10)
-
-        self.fig_file, self.ax_file_wave = plt.subplots(figsize=(7, 3))
-        self.canvas_file = FigureCanvasTkAgg(self.fig_file, master=frame)
-        self.canvas_file.get_tk_widget().grid(row=3, column=0, padx=10, pady=10, columnspan=2)
-
-    def setup_settings_tab(self):
-        frame = self.tab_settings
-        ttk.Label(frame, text="⚙️ Settings Panel", font=("Segoe UI", 14, "bold")).pack(pady=20)
-        ttk.Label(frame, text="More customization options coming soon!").pack()
-
-    def make_slider(self, frame, label, minval, maxval, default, row):
-        ttk.Label(frame, text=label + f" ({default})").grid(row=row, column=0, sticky='w', padx=10)
-        slider = ttk.Scale(frame, from_=minval, to=maxval, orient='horizontal')
-        slider.set(default)
-        slider.grid(row=row, column=1, sticky='ew', padx=10)
-        return slider
-
-    def design_iir_filter(self, filter_type='band', cutoff=[150, 3500], fs=44100):
-        b, a = butter(N=6, Wn=cutoff, fs=fs, btype=filter_type)
+        self.root.title("Simple Hearing Aid")
+        self.root.geometry("500x300")
+        
+        self.frame = ttk.Frame(root, padding=10)
+        self.frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Simple controls
+        ttk.Label(self.frame, text="Hearing Aid Controls", font=("Arial", 14)).pack(pady=10)
+        
+        # Volume control
+        ttk.Label(self.frame, text="Volume:").pack(anchor="w")
+        self.gain_var = tk.DoubleVar(value=2.0)
+        ttk.Scale(self.frame, from_=0.5, to=5.0, variable=self.gain_var).pack(fill="x")
+        
+        # Clarity control
+        ttk.Label(self.frame, text="Speech Clarity:").pack(anchor="w")
+        self.clarity_var = tk.DoubleVar(value=0.7)
+        ttk.Scale(self.frame, from_=0.0, to=1.0, variable=self.clarity_var).pack(fill="x")
+        
+        # Start/Stop button
+        self.is_processing = False
+        self.button = ttk.Button(self.frame, text="Start Hearing Aid", command=self.toggle_processing)
+        self.button.pack(pady=20)
+        
+        # Status
+        self.status_var = tk.StringVar(value="Ready")
+        ttk.Label(self.frame, textvariable=self.status_var).pack()
+        
+    def toggle_processing(self):
+        if self.is_processing:
+            self.is_processing = False
+            self.button.config(text="Start Hearing Aid")
+            self.status_var.set("Stopped")
+        else:
+            self.is_processing = True
+            self.button.config(text="Stop Hearing Aid")
+            self.status_var.set("Processing audio...")
+            threading.Thread(target=self.process_audio, daemon=True).start()
+    
+    def design_bandpass_filter(self, lowcut=300, highcut=5000, fs=44100):
+        nyquist = 0.5 * fs
+        low = lowcut / nyquist
+        high = highcut / nyquist
+        b, a = butter(4, [low, high], btype='band')
         return b, a
-
-    def noise_gate(self, signal, threshold=0.015):
-        return np.where(np.abs(signal) < threshold, 0, signal)
-
-    def spectral_subtraction(self, audio, noise_estimate):
-        spectrum = np.fft.rfft(audio)
-        noise_spectrum = np.fft.rfft(noise_estimate)
-        magnitude = np.abs(spectrum)
-        phase = np.angle(spectrum)
-        clean_magnitude = np.maximum(magnitude - np.abs(noise_spectrum), 0)
-        cleaned_signal = np.fft.irfft(clean_magnitude * np.exp(1j * phase))
-        return cleaned_signal
-
-    def normalize_audio(self, audio):
-        return audio / (np.max(np.abs(audio)) + 1e-6)
-
-    def process_audio(self, audio, b, a, gain, use_gate=False):
-        audio = self.normalize_audio(audio)
-        filtered = lfilter(b, a, audio)
-        if use_gate:
-            filtered = self.noise_gate(filtered)
-        amplified = np.clip(filtered * gain, -1.0, 1.0)
-        return amplified
-
-    def realtime_process(self):
+    
+    def process_audio(self):
         fs = 44100
-        blocksize = 512
-        b, a = self.design_iir_filter()
-        self.realtime_buffer = np.zeros(fs)
-        self.recorded_audio = []
-        noise_profile = np.zeros(blocksize)
-
+        blocksize = 1024
+        b, a = self.design_bandpass_filter()
+        
         def audio_callback(indata, outdata, frames, time, status):
             if status:
-                print("Status:", status)
-            audio_in = indata[:, 0]
-            gain = float(self.gain_slider.get())
-            use_gate = self.noise_gate_var.get()
-            record = self.record_var.get()
-            cleaned = self.spectral_subtraction(audio_in, noise_profile)
-            audio_out = self.process_audio(cleaned, b, a, gain, use_gate=use_gate)
-            outdata[:, 0] = audio_out
-            self.realtime_buffer = np.roll(self.realtime_buffer, -frames)
-            self.realtime_buffer[-frames:] = audio_out
-            if record:
-                self.recorded_audio.append(audio_out.copy())
-
-        def update_plot():
-            if not self.root.winfo_exists():
-                return
-            self.ax_wave.clear()
-            self.ax_wave.plot(self.realtime_buffer, color='blue')
-            self.ax_wave.set_title("Live Waveform")
-            self.ax_wave.set_ylim([-1.1, 1.1])
-            try:
-                self.canvas.draw()
-            except tk.TclError:
-                return
-            self.root.after(100, update_plot)
-
-        def stream_thread():
-            with sd.Stream(channels=1, callback=audio_callback, samplerate=fs, blocksize=blocksize, latency='low'):
-                sd.sleep(1000000)
-                if self.record_var.get():
-                    full_audio = np.concatenate(self.recorded_audio)
-                    sf.write("realtime_recorded.wav", full_audio, fs)
-                    print("Saved recorded audio.")
-
-        threading.Thread(target=stream_thread, daemon=True).start()
-        self.root.after(100, update_plot)
-
-    def process_file(self):
-        file_path = filedialog.askopenfilename(filetypes=[["WAV files", "*.wav"]])
-        if not file_path:
-            return
+                print(f"Status: {status}")
+            
+            audio_in = indata[:, 0] if indata.ndim > 1 else indata[:]
+            gain = self.gain_var.get()
+            clarity = self.clarity_var.get()
+            
+            # Apply bandpass filter
+            filtered = lfilter(b, a, audio_in)
+            
+            # Apply speech clarity enhancement
+            if clarity > 0:
+                speech_b, speech_a = butter(2, [1000/22050, 3000/22050], btype='band')
+                enhanced = lfilter(speech_b, speech_a, filtered)
+                # Blend original and enhanced based on clarity setting
+                filtered = (1-clarity) * filtered + clarity * enhanced * 1.5
+            
+            # Apply gain and prevent clipping
+            processed = np.clip(filtered * gain, -0.99, 0.99)
+            
+            # Output to all channels
+            if outdata.ndim > 1:
+                for i in range(outdata.shape[1]):
+                    outdata[:, i] = processed
+            else:
+                outdata[:] = processed
+        
         try:
-            audio, fs = sf.read(file_path)
-            if audio.ndim > 1:
-                audio = audio[:, 0]
-            b, a = self.design_iir_filter()
-            gain = self.file_gain_slider.get()
-            processed_audio = self.process_audio(audio, b, a, gain, use_gate=True)
-            sf.write("processed_output.wav", processed_audio, fs)
-            messagebox.showinfo("Success", "File processed and saved as 'processed_output.wav'")
-
-            self.ax_file_wave.clear()
-            self.ax_file_wave.plot(processed_audio, color='green')
-            self.ax_file_wave.set_title("Processed File Waveform")
-            self.ax_file_wave.set_ylim([-1.1, 1.1])
-            self.canvas_file.draw()
-
+            with sd.Stream(channels=1, callback=audio_callback, 
+                          samplerate=fs, blocksize=blocksize,
+                          latency='low'):
+                while self.is_processing and self.root.winfo_exists():
+                    sd.sleep(100)
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            print(f"Error: {e}")
+            self.is_processing = False
+            self.status_var.set(f"Error: {str(e)}")
+            self.button.config(text="Start Hearing Aid")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     root = tk.Tk()
-    app = AudioApp(root)
+    app = SimpleHearingAid(root)
     root.mainloop()
